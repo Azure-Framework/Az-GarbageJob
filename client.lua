@@ -1,14 +1,6 @@
---[[
-    Created by Lama Development
-    For support - https://discord.gg/etkAKTw3M7
-    Updated: 
-      • Only based off trash cans, no fake “new location” jobs  
-      • Adds a permanent blip at the shift start  
-      • Uses lib.notify for all messages  
-      • Prevents double-picking the same can  
-]]--
+-- client.lua (Trash Collector Job)
 
--- Job state
+-- State
 local isInJob      = false
 local garbageTruck = nil
 local garbagePay   = 0
@@ -18,7 +10,7 @@ local pickedTrash  = {}
 local shiftPoint   = vector3(2388.18, 3098.06, 48.15)
 local shiftHeading = 302.46
 
--- Create a map blip for the shift start
+-- Create a permanent blip at shift start
 Citizen.CreateThread(function()
     local blip = AddBlipForCoord(shiftPoint)
     SetBlipSprite(blip, 498)             -- garbage icon
@@ -29,6 +21,10 @@ Citizen.CreateThread(function()
     BeginTextCommandSetBlipName("STRING")
     AddTextComponentString("Trash Collector Start")
     EndTextCommandSetBlipName(blip)
+
+    -- Add help text entries
+    AddTextEntry("press_start_job", "Press ~INPUT_CONTEXT~ to start/end your shift")
+    AddTextEntry("press_quit_job", "Press ~INPUT_SPRINT~ + ~INPUT_PICKUP~ to quit your shift")
 end)
 
 -- Garbage can models
@@ -43,7 +39,7 @@ local garbageCanModels = {
     "prop_dumpster_4a","prop_dumpster_01a","prop_dumpster_02b","prop_dumpster_02a"
 }
 
--- ox_target options for each can
+-- Target options
 local garbageCanOptions = {
     label    = "Pick up trash",
     distance = 5.0,
@@ -78,7 +74,7 @@ local garbageCanOptions = {
     end
 }
 
--- Register all models
+-- Register models with ox_target
 for _, model in ipairs(garbageCanModels) do
     exports.ox_target:addModel(model, garbageCanOptions)
 end
@@ -100,14 +96,13 @@ function PayForTrash()
     TriggerServerEvent("TrashCollector:GiveReward", pay)
 end
 
--- Start your shift (spawn truck & instructions)
+-- Start shift (spawn truck)
 function StartGarbageJob()
     if isInJob then return end
     isInJob     = true
     garbagePay  = 0
     pickedTrash = {}
 
-    -- Spawn garbage truck
     RequestModel(Config.GarbageTruck)
     while not HasModelLoaded(Config.GarbageTruck) do
         Wait(100)
@@ -120,18 +115,17 @@ function StartGarbageJob()
     SetVehicleEngineOn(garbageTruck, true, true, false)
     TriggerServerEvent("TruckDriver:started", NetworkGetNetworkIdFromEntity(garbageTruck))
 
--- Instructions
-lib.notify({
-    id          = 'job_started',
-    title       = 'Trash Collector',
-    description = 'Shift started! Walk up to any trash bin and use your 3rd eye (ALT) to collect.',
-    type        = 'inform',
-    icon        = 'play-circle',
-    iconColor   = '#3498DB',
-    duration    = 10000,      -- 10 seconds
-    showDuration = true,      -- optional, defaults to true
-    position    = 'top-right' -- or wherever you like
-})
+    lib.notify({
+        id          = 'job_started',
+        title       = 'Trash Collector',
+        description = 'Shift started! Walk up to any trash bin and use your 3rd eye (ALT) to collect.',
+        type        = 'inform',
+        icon        = 'play-circle',
+        iconColor   = '#3498DB',
+        duration    = 10000,
+        showDuration= true,
+        position    = 'top-right'
+    })
 
     lib.notify({
         id          = 'end_shift',
@@ -139,27 +133,19 @@ lib.notify({
         description = 'Return to the truck and press E to end your shift.',
         type        = 'inform',
         icon        = 'truck',
-        duration    = 10000,      -- 10 seconds
-        showDuration = true,      -- optional, defaults to true
-        iconColor   = '#3498DB'
+        iconColor   = '#3498DB',
+        duration    = 10000,
+        showDuration= true
     })
 end
 
--- End shift & delete truck when back at the start
+-- Prompt to end shift at truck
 function TryEndShift()
     if not isInJob then return end
-
-    local pos   = GetEntityCoords(garbageTruck)
-    local dist  = #(pos - shiftPoint)
+    local pos  = GetEntityCoords(garbageTruck)
+    local dist = #(pos - shiftPoint)
     if dist <= 5.0 then
-        lib.notify({
-            id          = 'return_truck',
-            title       = 'Trash Collector',
-            description = 'Press E to end shift and retrieve earnings.',
-            type        = 'warning',
-            icon        = 'hand-holding-usd',
-            iconColor   = '#F39C12'
-        })
+        DisplayHelpTextThisFrame("press_start_job")
         if IsControlJustReleased(1, 38) then -- E
             DeleteEntity(garbageTruck)
             isInJob = false
@@ -175,52 +161,37 @@ function TryEndShift()
     end
 end
 
--- Draw start marker & listen for shift start/end
+-- Draw marker & handle start/end
 Citizen.CreateThread(function()
-    AddTextEntry("press_start_job", "Press ~INPUT_CONTEXT~ to start/end your shift")
-
     while true do
         Wait(1)
         local ped    = PlayerPedId()
         local coords = GetEntityCoords(ped)
         local dist   = #(coords - shiftPoint)
 
-        -- start/end marker
-        DrawMarker(
-            1,
-            shiftPoint.x, shiftPoint.y, shiftPoint.z - 2.0,
-            0,0,0, 0,0,0,
-            2.0,2.0,1.5,
-            50,205,50,75,
-            false, true, 2, false
-        )
-
+        DrawMarker(1, shiftPoint.x, shiftPoint.y, shiftPoint.z - 2.0, 0,0,0, 0,0,0, 2.0,2.0,1.5, 50,205,50,75, false, true, 2, false)
         if dist <= 2.0 then
-            DisplayHelpTextThisFrame("press_start_job")
-            if IsControlJustReleased(1, 38) then
-                if isInJob then
-                    TryEndShift()
-                else
-                    StartGarbageJob()
-                end
+            if isInJob then TryEndShift() else
+                DisplayHelpTextThisFrame("press_start_job")
+                if IsControlJustReleased(1, 38) then StartGarbageJob() end
             end
         end
     end
 end)
 
+-- In-job loop: handle SHIFT+X to quit
 Citizen.CreateThread(function()
     while true do
         Citizen.Wait(0)
         if isInJob and garbageTruck then
             local ped = PlayerPedId()
-            -- Are we seated in our job's truck?
             if IsPedInVehicle(ped, garbageTruck, false) then
-                -- CTRL group 0, control 21 is LEFT SHIFT, control 73 is X
+                -- Display quit prompt
+                DisplayHelpTextThisFrame("press_quit_job")
+                -- SHIFT (21) + X (73)
                 if IsControlPressed(0, 21) and IsControlJustReleased(0, 73) then
-                    -- End the shift
                     DeleteEntity(garbageTruck)
                     isInJob = false
-                    -- Notify player
                     lib.notify({
                         id          = 'shift_aborted',
                         title       = 'Trash Collector',
@@ -235,8 +206,7 @@ Citizen.CreateThread(function()
     end
 end)
 
-
--- Helper for on-screen help
+-- Helper for on-screen help text
 function DisplayHelpTextThisFrame(msg)
     BeginTextCommandDisplayHelp("STRING")
     AddTextComponentSubstringPlayerName(msg)
